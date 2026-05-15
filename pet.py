@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """
-Hermes Desktop Pet — 小黑猫
-Floating desktop companion showing Hermes Agent status.
-Side-profile cat that runs, walks, sleeps with 4-leg animation.
-macOS native floating window using PySide6 + AppKit.
+Hermes Desktop Pet — 小黑猫 v5
+Fix: outward-pointing ears, connected legs.
 """
 
 import json, math, random, sys, threading, time, urllib.request
@@ -13,6 +11,7 @@ from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QFont
 import AppKit
 
 
+# Force Qt window to float above everything on macOS
 def _force_floating(widget):
     """Set native NSWindow level to float above all other windows."""
     try:
@@ -29,22 +28,20 @@ def _force_floating(widget):
         pass
     return False
 
-
 HERMES = "http://localhost:9119/api/status"
 W, H = 180, 150
 
 
 class S:
-    IDLE, THINK, WORK, SPEAK, SLEEP, OFF = range(6)
-    L = ["待命中", "思考中", "工作中", "回复中", "休息中", "已离线"]
-    D = [(100, 255, 100), (255, 200, 50), (255, 100, 100),
-         (100, 200, 255), (150, 150, 150), (80, 80, 80)]
+    WORK, SLEEP = 0, 1
+    L = ["工作中", "休息中"]
+    D = [(255, 100, 100), (150, 150, 150)]
 
 
 class Cat(QWidget):
     def __init__(self):
         super().__init__()
-        self.st = S.IDLE
+        self.st = S.SLEEP
         self.bl = False
         self.bp = self.rp = self.bnc = self.eg = 0
         self.r = True
@@ -67,9 +64,9 @@ class Cat(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, True)
+        # Force floating after showing via timer
         QTimer.singleShot(200, lambda: _force_floating(self))
         QTimer.singleShot(1000, lambda: _force_floating(self))
-
     def _tmr(self):
         for fn, t in [(self._an, 33), (self._mv, 50)]:
             tm = QTimer(self); tm.timeout.connect(fn); tm.start(t)
@@ -86,35 +83,25 @@ class Cat(QWidget):
             if abs(self.vx) > 0.1: self.r = self.vx > 0
         else:
             self.rp *= 0.9; self.bnc *= 0.9
-        if self.st == S.THINK: self.eg = 0.5 + 0.5 * math.sin(time.time() * 3)
         self.update()
 
     def _pk(self):
         g = QApplication.primaryScreen().availableGeometry()
-        self.tx = random.uniform(10, g.width() - W - 10)
-        self.ty = random.uniform(30, g.height() - H - 10)
+        self.tx = random.uniform(30, g.width() - W - 30)
+        self.ty = random.uniform(40, g.height() - H - 30)
 
     def _mv(self):
         g = QApplication.primaryScreen().availableGeometry()
         x, y = self.x(), self.y()
-        if self.st in (S.SLEEP, S.OFF): self.vx *= 0.9; self.vy *= 0.9; return
+        if self.st != S.WORK:
+            self.vx *= 0.8; self.vy *= 0.8
+            return
         if self.tx is None: self._pk()
-        if self.st == S.WORK:
-            sp, pl = 3.0, 0.012
-            self.vx += (self.tx - x) * pl + random.uniform(-0.15, 0.15)
-            self.vy += (self.ty - y) * pl + random.uniform(-0.15, 0.15)
-            if abs(x - self.tx) < 30 and abs(y - self.ty) < 30: self.tx = None
-            self.vx *= 0.94; self.vy *= 0.94
-        elif self.st == S.THINK:
-            sp, pl = 0.6, 0.004
-            self.vx += (self.tx - x) * pl; self.vy += (self.ty - y) * pl
-            if abs(x - self.tx) < 10 and abs(y - self.ty) < 10: self.tx = None
-            self.vx *= 0.96; self.vy *= 0.96
-        else:
-            sp, pl = 0.4, 0.003
-            self.vx += (self.tx - x) * pl; self.vy += (self.ty - y) * pl
-            if abs(x - self.tx) < 8 and abs(y - self.ty) < 8: self.tx = None
-            self.vx *= 0.97; self.vy *= 0.97
+        sp, pl = 5.0, 0.015
+        self.vx += (self.tx - x) * pl + random.uniform(-0.2, 0.2)
+        self.vy += (self.ty - y) * pl + random.uniform(-0.2, 0.2)
+        if abs(x - self.tx) < 40 and abs(y - self.ty) < 40: self.tx = None
+        self.vx *= 0.95; self.vy *= 0.95
         s = math.hypot(self.vx, self.vy)
         if s > sp: self.vx, self.vy = self.vx / s * sp, self.vy / s * sp
         nx, ny = x + self.vx, y + self.vy
@@ -131,10 +118,12 @@ class Cat(QWidget):
                     with urllib.request.urlopen(HERMES, timeout=3) as r:
                         d = json.loads(r.read())
                     gw = d.get("gateway_state", ""); se = d.get("active_sessions", 0)
-                    self.st = S.OFF if gw != "running" else (S.WORK if se > 0 else S.IDLE)
-                except: self.st = S.OFF
+                    self.st = S.WORK if (gw == "running" and se > 0) else S.SLEEP
+                except: self.st = S.SLEEP
                 time.sleep(2)
         threading.Thread(target=p, daemon=True).start()
+
+    # ─── DRAW ────────────────────────────────────────────────────────
 
     C = QColor(22, 22, 26)
 
@@ -145,7 +134,7 @@ class Cat(QWidget):
         cy = H / 2 + 5 + br + self.bnc
         sp = abs(self.vx) + abs(self.vy)
         run = sp > 0.3
-        slp = self.st in (S.SLEEP, S.OFF)
+        slp = self.st != S.WORK
         d = 1 if self.r else -1
 
         bx, by = W / 2 + d * 5, cy
@@ -153,24 +142,37 @@ class Cat(QWidget):
 
         p.setPen(Qt.PenStyle.NoPen)
 
-        # Tail
-        tx0 = bx - d * 26; ty0 = by - 4
+        # ═══ TAIL (behind body) ═══
+        tx0 = bx - d * 26
+        ty0 = by - 4
         t = QPainterPath()
         t.moveTo(tx0, ty0)
         t.cubicTo(tx0 - d * 26, ty0 - 4, tx0 - d * 34, ty0 - 26, tx0 - d * 24, ty0 - 36)
         pen = QPen(self.C, 4.5)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        p.setPen(pen); p.setBrush(Qt.BrushStyle.NoBrush); p.drawPath(t); p.setPen(Qt.PenStyle.NoPen)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawPath(t)
+        p.setPen(Qt.PenStyle.NoPen)
 
-        # Legs
+        # ═══ LEGS (drawn BEFORE body so body overlaps them) ═══
+        lw, lh = 6, 12
         if run:
-            for ox, phase in [(-15, 0), (-6, math.pi), (6, math.pi / 2), (15, math.pi * 1.5)]:
-                sw = math.sin(self.rp + phase) * 8
-                lx, ly = bx + ox, by + bh / 2 - 2
-                p.save(); p.translate(lx, ly); p.rotate(sw * 2)
+            rp = self.rp
+            leg_positions = [(-15, 0), (-6, math.pi), (6, math.pi / 2), (15, math.pi * 1.5)]
+            for ox, phase in leg_positions:
+                swing = math.sin(rp + phase) * 8
+                lx = bx + ox
+                ly = by + bh / 2 - 2  # start slightly INSIDE body
+                p.save()
+                p.translate(lx, ly)
+                p.rotate(swing * 2)
                 p.setBrush(self.C)
-                p.drawRoundedRect(QRectF(-3, 0, 6, 11 + max(0, sw)), 2, 2)
-                p.drawRoundedRect(QRectF(-3.5, 11 + max(0, sw) - 2, 8, 5), 2, 2)
+                # Leg body
+                leg_h = lh + max(0, swing)
+                p.drawRoundedRect(QRectF(-3, 0, 6, leg_h), 2, 2)
+                # Paw
+                p.drawRoundedRect(QRectF(-3.5, leg_h - 2, 8, 5), 2, 2)
                 p.restore()
         elif slp:
             for ox in (-14, -4, 5, 15):
@@ -178,107 +180,138 @@ class Cat(QWidget):
                 p.drawRoundedRect(QRectF(bx + ox - 3.5, by + bh / 2 + 4, 8, 4), 2, 2)
         else:
             for ox in (-15, -6, 6, 15):
-                p.drawRoundedRect(QRectF(bx + ox - 3, by + bh / 2 - 2, 6, 11), 2, 2)
-                p.drawRoundedRect(QRectF(bx + ox - 3.5, by + bh / 2 + 9, 8, 5), 2, 2)
+                p.drawRoundedRect(QRectF(bx + ox - 3, by + bh / 2 - 2, 6, lh), 2, 2)
+                p.drawRoundedRect(QRectF(bx + ox - 3.5, by + bh / 2 + lh - 3, 8, 5), 2, 2)
 
-        # Body
+        # ═══ BODY ═══
         p.setBrush(self.C)
         p.drawEllipse(QRectF(bx - bw / 2, by - bh / 2, bw, bh))
 
-        # Head
-        hx = bx + d * 26; hy = by - 10 + br; hr = 28
+        # ═══ HEAD ═══
+        hx = bx + d * 26
+        hy = by - 10 + br
+        hr = 28
         p.drawEllipse(QPointF(hx, hy), hr, hr)
 
-        # Ears
+        # ═══ EARS — thick, rounded, curved tips ═══
         for s, tilt in [(-1, -15), (1, 15)]:
             base_y = hy - hr * 0.6
+            base_l = hx + s * hr * 0.0
+            base_r = hx + s * hr * 0.65
+            tip_x = base_r + s * math.sin(math.radians(tilt)) * 18
+            tip_y = base_y - math.cos(math.radians(tilt)) * 18 - 2
+            # Curved ear with rounded tip
             ep = QPainterPath()
-            ep.moveTo(hx + s * hr * 0.0, base_y)
-            ep.cubicTo(hx + s * hr * 0.0 + s * 2, base_y - 10,
-                       hx + s * hr * 0.65 + s * math.sin(math.radians(tilt)) * 18 - s * 3, base_y - math.cos(math.radians(tilt)) * 18 - 2 + 4,
-                       hx + s * hr * 0.65 + s * math.sin(math.radians(tilt)) * 18, base_y - math.cos(math.radians(tilt)) * 18 - 2)
-            ep.cubicTo(hx + s * hr * 0.65 + s * math.sin(math.radians(tilt)) * 18 + s * 3, base_y - math.cos(math.radians(tilt)) * 18 - 2 + 4,
-                       hx + s * hr * 0.65 - s * 2, base_y - 10,
-                       hx + s * hr * 0.65, base_y)
+            ep.moveTo(base_l, base_y)
+            ep.cubicTo(base_l + s * 2, base_y - 10,
+                       tip_x - s * 3, tip_y + 4,
+                       tip_x, tip_y)
+            ep.cubicTo(tip_x + s * 3, tip_y + 4,
+                       base_r - s * 2, base_y - 10,
+                       base_r, base_y)
             ep.closeSubpath()
-            p.setBrush(self.C); p.setPen(Qt.PenStyle.NoPen); p.drawPath(ep)
-            # Pink inner
+            p.setBrush(self.C)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawPath(ep)
+            # Pink inner — smaller curved ear
             ip = QPainterPath()
-            ip.moveTo(hx + s * hr * 0.0 + s * 6, base_y - 2)
-            ip.cubicTo(hx + s * hr * 0.0 + s * 6, base_y - 8,
-                       hx + s * hr * 0.65 + s * math.sin(math.radians(tilt)) * 18 - s * 1, base_y - math.cos(math.radians(tilt)) * 18 - 2 + 6,
-                       (hx + s * hr * 0.65 + s * math.sin(math.radians(tilt)) * 18) * 0.85 + hx * 0.15, base_y - math.cos(math.radians(tilt)) * 18 - 2 + 5)
-            ip.cubicTo((hx + s * hr * 0.65 + s * math.sin(math.radians(tilt)) * 18) * 0.85 + hx * 0.15, base_y - math.cos(math.radians(tilt)) * 18 - 2 + 5,
-                       hx + s * hr * 0.65 - s * 4, base_y - 8,
-                       hx + s * hr * 0.65 - s * 4, base_y - 2)
+            ip.moveTo(base_l + s * 6, base_y - 2)
+            ip.cubicTo(base_l + s * 6, base_y - 8,
+                       tip_x - s * 1, tip_y + 6,
+                       tip_x * 0.85 + hx * 0.15, tip_y + 5)
+            ip.cubicTo(tip_x * 0.85 + hx * 0.15, tip_y + 5,
+                       base_r - s * 4, base_y - 8,
+                       base_r - s * 4, base_y - 2)
             ip.closeSubpath()
-            p.setBrush(QColor(255, 120, 120, 150)); p.drawPath(ip)
+            p.setBrush(QColor(255, 120, 120, 150))
+            p.drawPath(ip)
 
-        # Eyes
+        # ═══ EYES (BOTH, same size) ═══
         if slp:
-            pen = QPen(QColor(180, 180, 190), 2, cap=Qt.PenCapStyle.RoundCap)
+            pen = QPen(QColor(180, 180, 190), 2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             p.setPen(pen); p.setBrush(Qt.BrushStyle.NoBrush)
             for side in (-0.35, 0.35):
-                ex = hx + side * hr * 1.1; ey = hy - 2
+                ex = hx + side * hr * 1.1
+                ey = hy - 2
                 p.drawLine(int(ex - 5), int(ey), int(ex + 5), int(ey))
             p.setPen(Qt.PenStyle.NoPen)
         elif self.bl:
-            pen = QPen(QColor(180, 180, 190), 2, cap=Qt.PenCapStyle.RoundCap)
+            pen = QPen(QColor(180, 180, 190), 2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             p.setPen(pen); p.setBrush(Qt.BrushStyle.NoBrush)
             for side in (-0.35, 0.35):
-                ex = hx + side * hr * 1.1; ey = hy - 2
+                ex = hx + side * hr * 1.1
+                ey = hy - 2
                 p.drawLine(int(ex - 5), int(ey), int(ex + 5), int(ey))
             p.setPen(Qt.PenStyle.NoPen)
         else:
-            gl = 1.0 if self.st != S.THINK else (0.5 + 0.5 * self.eg)
+            gl = 1.0
             for side in (-0.35, 0.35):
-                ex = hx + side * hr * 1.1; ey = hy - 2
+                ex = hx + side * hr * 1.1
+                ey = hy - 2
                 ew, eh = 12, 11
-                sc = QColor(int(200 * gl), int(230 * gl), int(80 + 40 * gl))
-                p.setBrush(sc); p.setPen(QPen(QColor(30, 30, 36), 1))
+                # Sclera
+                scl = QColor(int(200 * gl), int(230 * gl), int(80 + 40 * gl))
+                p.setBrush(scl); p.setPen(QPen(QColor(30, 30, 36), 1))
                 p.drawEllipse(QRectF(ex - ew / 2, ey - eh / 2, ew, eh))
+                # Pupil
                 p.setPen(Qt.PenStyle.NoPen); p.setBrush(QColor(6, 6, 10))
                 p.drawEllipse(QRectF(ex - 2, ey - 3, 4, 6))
+                # Highlight
                 p.setBrush(QColor(255, 255, 255, 230))
                 p.drawEllipse(QPointF(ex - 2, ey - 2), 2, 2)
 
-        # Snout
-        sx, sy = hx, hy + 8
+        # ═══ SNOUT (centered between eyes) ═══
+        sx = hx
+        sy = hy + 8
         p.setBrush(QColor(255, 105, 105)); p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(QPointF(sx, sy), 2.5, 2)
 
-        # Mouth + teeth
+        # ═══ MOUTH + TEETH ═══
         if not slp:
+            # Closed mouth — small curve
             p.setPen(QPen(QColor(200, 200, 210), 1.2))
             p.setBrush(Qt.BrushStyle.NoBrush)
             mp = QPainterPath()
-            mp.moveTo(sx - 4, sy + 5); mp.quadTo(sx, sy + 7, sx + 4, sy + 5)
+            mp.moveTo(sx - 4, sy + 5)
+            mp.quadTo(sx, sy + 7, sx + 4, sy + 5)
             p.drawPath(mp)
-            p.setPen(Qt.PenStyle.NoPen); p.setBrush(QColor(240, 240, 250))
+            # Two fangs below the mouth, one each side
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(240, 240, 250))
             for dx in (-4, 4):
                 f = QPainterPath()
-                f.moveTo(sx + dx - 1.5, sy + 5); f.lineTo(sx + dx + 1.5, sy + 5)
-                f.lineTo(sx + dx, sy + 10); f.closeSubpath()
+                f.moveTo(sx + dx - 1.5, sy + 5)
+                f.lineTo(sx + dx + 1.5, sy + 5)
+                f.lineTo(sx + dx, sy + 10)
+                f.closeSubpath()
                 p.drawPath(f)
 
-        # Whiskers
+        # ═══ WHISKERS — simple, short ═══
         p.setPen(QPen(QColor(140, 140, 150), 0.7))
-        wx, wy = sx, sy + 2
+        wx = sx + d * 2
+        wy = sy + 2
+        # Two whiskers per side, one up one down
         for ang, ln in [(-15, 12), (15, 12)]:
             rad = math.radians(ang)
-            p.drawLine(int(wx), int(wy), int(wx + math.cos(rad) * ln), int(wy + math.sin(rad) * ln))
+            p.drawLine(int(wx), int(wy),
+                       int(wx + d * math.cos(rad) * ln),
+                       int(wy + math.sin(rad) * ln))
 
-        # Zzz
+        # ═══ Zzz ═══
         if slp:
-            zz = math.sin(time.time() * 3); zx = hx + 18
+            zz = math.sin(time.time() * 3)
+            zx = hx + d * 18
             for i, (dx, dy, sz) in enumerate([(12, -16, 9), (24, -30, 11), (38, -44, 14)]):
                 f = QFont("STHeiti", sz); p.setFont(f)
                 p.setPen(QPen(QColor(130, 130, 190, 180), 1.5))
-                p.drawText(QPointF(zx + dx, hy + dy + zz * i * 3), "z" if i < 2 else "Z")
+                p.drawText(QPointF(zx + dx * d, hy + dy + zz * i * 3), "z" if i < 2 else "Z")
 
-        # Status dot
+        # ═══ STATUS DOT ═══
         r, g, b = S.D[self.st]
-        p.setBrush(QColor(r, g, b)); p.drawEllipse(QPointF(W / 2, 12), 3.5, 3.5)
+        p.setBrush(QColor(r, g, b))
+        p.drawEllipse(QPointF(W / 2, 12), 3.5, 3.5)
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
@@ -296,7 +329,8 @@ class Cat(QWidget):
         st = m.addAction(f"🐱 {S.L[self.st]}"); st.setEnabled(False)
         m.addSeparator()
         at = m.addAction("📌 置顶"); at.setCheckable(True); at.setChecked(True)
-        at.triggered.connect(self._tp); m.addSeparator()
+        at.triggered.connect(self._tp)
+        m.addSeparator()
         qa = m.addAction("❌ 退出")
         ra = m.exec(e.globalPos())
         if ra == qa: QApplication.instance().quit()
@@ -306,7 +340,8 @@ class Cat(QWidget):
         f = self.windowFlags()
         self.setWindowFlags(f | Qt.WindowType.WindowStaysOnTopHint if c else f & ~Qt.WindowType.WindowStaysOnTopHint)
         self.show()
-        if c: QTimer.singleShot(200, lambda: _force_floating(self))
+        if c:
+            QTimer.singleShot(200, lambda: _force_floating(self))
 
 
 if __name__ == "__main__":
